@@ -2,6 +2,10 @@
 
 ![Sistema PML](public/assets/mockup.png)
 
+> [!IMPORTANT]
+> **Versão de Avaliação / Demonstração**
+> Este repositório contém apenas um **fragmento do projeto principal** (composto por componentes, contextos, páginas e serviços) e serve exclusivamente para fins de **demonstração e avaliação de código**. Não é o projeto completo que se encontra em produção.
+
 ## 🏛️ Sobre o Projeto
 
 O **Sistema de Agendamentos PML** foi desenvolvido para modernizar e otimizar os processos do setor social do **Presídio Masculino de Lages (PML)**. 
