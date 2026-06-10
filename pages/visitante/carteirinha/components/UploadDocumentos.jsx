@@ -1,0 +1,227 @@
+import React from 'react';
+import { CheckCircle, Upload, XCircle, AlertTriangle } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import imageCompression from 'browser-image-compression';
+import { useToast } from '@/components/ui/use-toast';
+
+// Verifica se o arquivo é realmente legível (detecta arquivos do Google Drive não baixados)
+const verificarArquivoAcessivel = (file) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(true);
+    reader.onerror = () => resolve(false);
+    reader.readAsArrayBuffer(file.slice(0, 1024)); // Lê apenas os primeiros 1KB
+  });
+};
+
+// Comprime imagens antes do envio (PDFs são ignorados)
+export const comprimirArquivo = async (file) => {
+  if (!file) return file;
+
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf');
+  if (isPdf) {
+    return file;
+  }
+
+  if (file.size < 250 * 1024) {
+    return file;
+  }
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+  const options = {
+    maxSizeMB: 0.8,
+    maxWidthOrHeight: isIOS ? 1600 : 1920, // Resolução um pouco menor no iOS para evitar crash de memória
+    useWebWorker: !isIOS, // No iOS, workers em canvas costumam dar erro de memória, melhor rodar na main thread
+    initialQuality: 0.8,
+  };
+
+  try {
+    const compressedBlob = await imageCompression(file, options);
+
+    if (!compressedBlob || compressedBlob.size === 0) {
+      console.warn("Compressão vazia. Usando original.");
+      return file;
+    }
+
+    let finalFile;
+    if (compressedBlob instanceof File) {
+      finalFile = compressedBlob;
+    } else {
+      finalFile = new File([compressedBlob], file.name, {
+        type: file.type || compressedBlob.type || 'image/jpeg'
+      });
+    }
+
+    if (!finalFile || !finalFile.size || finalFile.size === 0) {
+      return file;
+    }
+
+    return finalFile;
+  } catch (error) {
+    console.error("Erro na compressão:", error);
+    return file;
+  }
+};
+
+const UploadDocumentos = ({ doc, isRequired, documentosState, handleFileSelect, clearFile, setOpenExampleVacina, obterInstrucaoParentesco }) => {
+  const { toast } = useToast();
+  const files = documentosState[doc.name];
+  const hasFiles = files && files.length > 0;
+
+  const onFileChange = async (e) => {
+    const selectedFiles = Array.from(e.target.files);
+
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+    const allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'];
+
+    const invalidFormatFiles = selectedFiles.filter(f => {
+      const type = f.type.toLowerCase();
+      const extension = f.name.split('.').pop().toLowerCase();
+      return !allowedTypes.includes(type) && !allowedExtensions.includes(extension);
+    });
+
+    if (invalidFormatFiles.length > 0) {
+      toast({
+        title: "Formato inválido",
+        description: `Somente arquivos JPG, JPEG, PNG e PDF são aceitos. Arquivo recusado: "${invalidFormatFiles[0].name}".`,
+        className: "bg-red-500 text-white border-none"
+      });
+      e.target.value = "";
+      handleFileSelect({ target: { files: [] } }, doc.name);
+      return;
+    }
+
+    const oversizedFiles = selectedFiles.filter(f => f.size > 5 * 1024 * 1024);
+    if (oversizedFiles.length > 0) {
+      toast({
+        title: "Arquivo muito grande",
+        description: `"${oversizedFiles[0].name}" excede 5MB. Converta para JPG em ilovepdf.com e tente novamente.`,
+        className: "bg-red-500 text-white border-none"
+      });
+      e.target.value = "";
+      handleFileSelect({ target: { files: [] } }, doc.name);
+      return;
+    }
+
+    // PDFs acima de 3MB podem travar celulares — bloquear preventivamente
+    const heavyPdfs = selectedFiles.filter(f => {
+      const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+      return isPdf && f.size > 3 * 1024 * 1024;
+    });
+    if (heavyPdfs.length > 0) {
+      toast({
+        title: "PDF muito pesado",
+        description: `PDFs acima de 3MB podem falhar no celular. Converta para JPG em ilovepdf.com antes de enviar.`,
+        className: "bg-amber-500 text-white border-none"
+      });
+      e.target.value = "";
+      handleFileSelect({ target: { files: [] } }, doc.name);
+      return;
+    }
+
+    // Verifica se o arquivo é realmente legível (problema comum com Google Drive no celular)
+    const inacessiveis = [];
+    for (const f of selectedFiles) {
+      const acessivel = await verificarArquivoAcessivel(f);
+      if (!acessivel) inacessiveis.push(f.name);
+    }
+    if (inacessiveis.length > 0) {
+      toast({
+        title: "Arquivo inacessível",
+        description: `Não foi possível ler o arquivo "${inacessiveis[0]}". Se veio do Google Drive, baixe-o para o celular primeiro e selecione da galeria ou pasta de downloads.`,
+        className: "bg-red-500 text-white border-none",
+        duration: 8000,
+      });
+      e.target.value = "";
+      handleFileSelect({ target: { files: [] } }, doc.name);
+      return;
+    }
+
+    handleFileSelect(e, doc.name);
+  };
+
+
+  return (
+    <div key={doc.name} className="relative group space-y-1">
+      <div className="flex items-center justify-between mb-1">
+        <Label className="text-xs font-semibold text-slate-700">
+          {doc.label} {isRequired && "*"}
+        </Label>
+        {doc.name === "declaracao_vacina" && (
+          <button
+            type="button"
+            onClick={() => setOpenExampleVacina(true)}
+            className="text-[10px] bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-0.5 rounded font-bold transition z-20"
+          >
+            Ver exemplo da DECLARAÇÃO DE VACINA!
+          </button>
+        )}
+      </div>
+
+      <input
+        type="file"
+        id={doc.name}
+        name={doc.name}
+        multiple={doc.multiple}
+        accept=".pdf,.jpg,.jpeg,.png"
+        className="hidden"
+        onChange={onFileChange}
+      />
+      <label
+        htmlFor={doc.name}
+        className={`relative flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition-all ${hasFiles ? "border-green-500 bg-green-50/50" : "border-slate-300 hover:border-[#2D5016] hover:bg-[#2D5016]/5 bg-slate-50"
+          }`}
+      >
+        <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
+          {hasFiles ? (
+            <>
+              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mb-2">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+              </div>
+              <p className="text-sm font-bold text-green-700 break-all line-clamp-1 px-2">
+                {files.length === 1 ? files[0].name : `${files.length} arquivos selecionados`}
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mb-2 group-hover:bg-[#2D5016]/10 transition-colors">
+                <Upload className="w-5 h-5 text-slate-500 group-hover:text-[#2D5016]" />
+              </div>
+              <p className="text-sm font-bold text-slate-700">Clique para enviar</p>
+              <p className="text-xs text-slate-500 mt-1">{doc.multiple ? "Pode enviar mais de um arquivo" : "Envie o arquivo"}</p>
+            </>
+          )}
+        </div>
+        {hasFiles && (
+          <button
+            type="button"
+            onClick={(e) => clearFile(e, doc.name)}
+            className="absolute top-2 right-2 p-1.5 bg-white rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors shadow-sm"
+          >
+            <XCircle className="w-4 h-4" />
+          </button>
+        )}
+      </label>
+      {/* Aviso sobre Google Drive */}
+      <div className="flex items-start gap-1.5 mt-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+        <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+        <p className="text-[10px] text-amber-800 leading-tight">
+          <strong>Evite o Google Drive:</strong> baixe o arquivo no celular antes de enviar.
+        </p>
+      </div>
+      {doc.name === "declaracao_residencia" && (
+        <p className="text-[11px] text-gray-500 mt-1">
+          Envie este documento apenas se o comprovante de residência não estiver em seu nome.
+        </p>
+      )}
+      {doc.name === "comprovante_parentesco" && (
+        <p className="text-[11px] text-gray-500 mt-1">
+          {obterInstrucaoParentesco()}
+        </p>
+      )}
+    </div>
+  );
+};
+
+export default UploadDocumentos;
